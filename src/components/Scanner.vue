@@ -1,6 +1,8 @@
 <template>
   <div id="dwtContainer">
-    <div id="dwtcontrolContainer"></div>
+    <!-- <div id="dwtcontrolContainer"></div> -->
+    <Viewer :id="viewer.viewerId" :width="viewer.width" :height="viewer.height"/>
+    <button @click="getInstance">Get instance</button>
     <div id="dwtcontrolPanel">      
       <div id="control-panel">
         <p>Source</p>
@@ -18,10 +20,10 @@
         <button @click="openImageEditor">Edit</button>
       </div>
       <div id="io-board">
-        <label for="prefix-editor">File Prefix</label>
-        <input id="prefix-editor" v-model="fileIO.prefix" >
-        <label for="postfix-editor">File Postfix</label>
-        <input id="postfix-editor" v-model="fileIO.postfix" >
+        <!-- <label for="prefix-editor">File Prefix</label>
+        <input id="prefix-editor" v-model="fileIO.prefix" > -->
+        <label for="postfix-editor">File Name: </label>
+        <input id="postfix-editor" v-model="fileIO.fileName" >
         <label for="format-selector">Format Selector</label>
         <select id="format-selector" v-model="fileIO.selectedFormat">
           <option v-for="(format, idx) in fileIO.fileFormat" :key="idx" :value="format">{{ format }}</option>
@@ -64,19 +66,30 @@
         <button @click="updateVideoCameraSetting">Apply</button>
         <button @click="captureImage">Capture</button>
       </div>
+      <div id="barcode-board">
+        <p><strong>Barcode Reader</strong></p>
+        <button @click="decodeImage">Decode</button>
+      </div>
     </div>
   </div>
 </template>
 
 <script>
 import dwt from "dwt";
+import Viewer from '@/components/Viewer.vue'
 
 export default {
   name: "dwt",
+  components: {
+    Viewer
+  },
   data() {
     return {
       timeIntervalId: null,
       dwtInstance: null,
+      dwtId: 'dwtObject',
+      licenseKey: "t01016QAAADyBe7yfb9oPaRKoDodUi2D6w3Dj/XeSforvLiBX6PXItwyqx3NL/4Uso1U/t4Gol58RCjB9B1q+RjxJ2qOVHa1eGzRmGbzga3PGGn1/tDAWpk/DKsyhQmO9F1PDDdxIL+c=",
+      barcodeReader: null,
       videoCamera: {
         obj: null,
         sources: [],
@@ -91,14 +104,14 @@ export default {
         selectedRotation: 0
       },
       viewer: {
-        instance: null,
+        viewerId: 'dwtViewer',
+        viewerObj: null,
         selectedIndex: 0,
-        width: 0,
-        height: 0
+        width: 400,
+        height: 600
       },
       fileIO: {
-        prefix: '',
-        postfix: '',
+        fileName: '',
         selectedFormat: 'JPEG',
         fileFormat: ['JPEG', 'PNG', 'TIFF', 'BMP', 'PDF']
       }
@@ -152,29 +165,64 @@ export default {
     // }
   },
   mounted() {
-    // Initialize the reference of dwtInstance actively.
-    dwt.WebTwainEnv.ResourcesPath = "resources/dwt";
-    dwt.WebTwainEnv.ProductKey =
-      "t01016QAAADyBe7yfb9oPaRKoDodUi2D6w3Dj/XeSforvLiBX6PXItwyqx3NL/4Uso1U/t4Gol58RCjB9B1q+RjxJ2qOVHa1eGzRmGbzga3PGGn1/tDAWpk/DKsyhQmO9F1PDDdxIL+c=";
-    dwt.WebTwainEnv.AutoLoad = false;
-    dwt.WebTwainEnv.Containers = [
-      { ContainerId: "dwtcontrolContainer", Width: "100%", Height: "100%" },
-    ];
-    dwt.WebTwainEnv.IfAddMD5InUploadHeader = false;
-    dwt.WebTwainEnv.IfConfineMaskWithinTheViewer = false;
-    dwt.WebTwainEnv.RegisterEvent("OnWebTwainReady", () => {
-      console.log("WebTwain Ready");
-      (() => this.dwtInstance = dwt.WebTwainEnv.GetWebTwain("dwtcontrolContainer"))();
-      // Register OnClick for viewer
-      this.dwtInstance.RegisterEvent('OnMouseClick', (idx) => {this.viewer.selectedIndex = idx})
+    this.initDwtObj()
+    .then(() => {
+      console.log(dwt.WebTwainEnv.GetWebTwainEx(this.dwtId))
+      dwt.WebTwainEnv.RegisterEvent("OnWebTwainReady", () => {
+      (() => this.dwtInstance = dwt.WebTwainEnv.GetWebTwainEx(this.dwtId))();
+      this.initDwtViewer()
       // Update webcam list
       this.setupVideoCamera()
+      this.viewer.viewerObj = this.dwtInstance.Viewer
+      this.viewer.viewerObj.ShowPageNumber = true
+      this.barcodeReader = this.dwtInstance.Addon.BarcodeReader
       window.dwtObj = this.dwtInstance
-    });
-    dwt.WebTwainEnv.Load();
+      });
+    })
     window.dwt = dwt;
   },
   methods: {
+    getInstance: function () {
+      console.log(`${this.dwtId}: ${JSON.stringify(dwt.WebTwainEnv.GetWebTwainEx(this.dwtId))}`)
+      console.log(`dwtcontrolContainer: ${JSON.stringify(dwt.WebTwainEnv.GetWebTwain('dwtcontrolContainer'))}`)
+    },
+    initDwtObj: function () {
+      return new Promise((res, rej) => {
+        // Before initialization, unmount all the instances
+        if (dwt.WebTwainEnv.DeleteDWTObject(this.dwtId)) { console.log(true);res(true); }
+        else { rej(false) }
+      })
+      .then(() => {
+          // Initialize the reference of dwtInstance actively.
+          dwt.WebTwainEnv.ResourcesPath = "resources/dwt";
+          dwt.WebTwainEnv.ProductKey = this.licenseKey
+          dwt.WebTwainEnv.AutoLoad = false;
+          dwt.WebTwainEnv.Containers = [];
+          dwt.WebTwainEnv.IfAddMD5InUploadHeader = false;
+          dwt.WebTwainEnv.IfConfineMaskWithinTheViewer = false;
+          dwt.WebTwainEnv.Load()
+      })
+      .then(() => {
+        let dwtConfig = { WebTwainId: this.dwtId }
+        // By default, use local service is true
+        dwt.WebTwainEnv.CreateDWTObjectEx(
+          dwtConfig, 
+          (dwtObject) => { window.console.log('111'); this.dwtInstance = dwtObject; },
+          (errCode, errStr) => { console.log(`failed to initialize dwt, code: ${errCode}, message: ${errStr}`); }
+        )
+      })
+    },
+    initDwtViewer: function () {
+      if (this.dwtInstance === null)  { alert('WebTwain Object has not been initialized yet.') }
+      else {
+        const dwtObj = this.dwtInstance
+        let viewOptions = { width: this.viewer.width, height: this.viewer.height }
+        if (dwtObj.BindViewer(this.viewer.viewerId, viewOptions)) {
+          // Register OnClick for viewer
+          this.dwtInstance.RegisterEvent('OnMouseClick', (idx) => { this.viewer.selectedIndex = idx })
+        }
+      }
+    },
     acquireImage: function() {
       const DWObject = this.dwtInstance;
       if (DWObject) {
@@ -210,6 +258,13 @@ export default {
         () => { console.log('captured successfully') }, 
         (errCode, errStr) => { console.error(`error code: ${errCode}, ${errStr}`) }
       )
+    },
+    decodeImage: function () {
+      this.barcodeReader.decode(this.viewer.selectedIndex)
+      .then((textResult) => {
+        console.log(textResult)
+        console.log(textResult[0].barcodeText)
+      })
     },
     loadImage: function() {
       const DWObject = this.dwtInstance;
@@ -302,7 +357,7 @@ export default {
       this.updateVideoCameraSetting()
     },
     saveFile: function () {
-      let fileName = this.fileIO.prefix + this.fileIO.postfix
+      let fileName = this.fileIO.fileName
       let index = this.viewer.selectedIndex
       let format = this.fileIO.selectedFormat
       let onSaveSuccess = function () { alert(`${fileName} saved successfully`) }
@@ -381,6 +436,12 @@ button:hover {
   border: 0 solid transparent;
   background-color: rgb(0, 102, 161);
   cursor: pointer;
+}
+button:active {
+  border: 0 solid transparent;
+}
+button:visited {
+  border: 0 solid transparent;
 }
 </style>
 
